@@ -9,14 +9,14 @@
 #undef MODULE
 #define MODULE
 
-#include <linux/kernel.h>   // for doing kernel work */
+#include <linux/kernel.h>   // for doing kernel work
 #include <linux/module.h>   // include all kernel modules
-#include <linux/init.h>     // include __init and __exit macros
-#include <linux/fs.h>       // for register_chrdev */
-#include <linux/uaccess.h>  // for get_user and put_user */
-#include <linux/string.h>   // for memset. NOTE - not string.h!*/
+//#include <linux/init.h>     // include __init and __exit macros todo uncomment
+#include <linux/fs.h>       // for register_chrdev
+//#include <linux/uaccess.h>  // for get_user and put_user todo uncomment
+#include <linux/string.h>   // for memset. NOTE - not string.h!
 
-MODULE_LICENSE("GPL");
+#include <sys/types.h> //todo delete
 
 #define MAJOR_NUM 240
 #define DEVICE_NAME "msg_slot_device"
@@ -28,13 +28,20 @@ MODULE_LICENSE("GPL");
 static int device_open(struct inode* inode, struct file*  file){ //todo maybe change the signature
 }
 
-static long device_ioctl(struct file* file, unsigned int ioctl_command_id, unsigned long  ioctl_param ){ //todo change the signature
+static long device_ioctl(struct file* filep, unsigned int ioctl_command_id, unsigned long  ioctl_param ){ //todo change the signature
 }
 
-static ssize_t device_read( struct file* file, char __user* buffer, size_t length, loff_t* offset ){ //todo maybe change the signature
+static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){ //todo maybe change the signature, maybe add '--user' before 'buffer'
+    //read len bytes, from the device file starting from the offset provided into the buffer.
+    //(cannot simply dereference the pointer since the pointer 'buffer' have address from the user apace and not from the kernel space)
+    // thus we will use: long copy_to_user(void __user *to, const void * from, unsigned long n)
+    //refresh the offset
+    *offset += len;
+    // return the number of bytes that have been successfully read
+    return len;
 }
 
-static ssize_t device_write( struct file* file, const char __user* buffer, size_t length, loff_t* offset){ //todo maybe change the signature
+static ssize_t device_write( struct file* file, const char __user* buffer, size_t len, loff_t* offset){ //todo maybe change the signature
 }
 
 //==================== DEVICE SETUP: =============================
@@ -55,12 +62,18 @@ static int __init my_init(void){
     register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
 
     printk( "Registeration is successful.");
+
+    //Initiate a data structure for all the devices that the driver manage - each one have different minor number
+    // using vmalloc or kmalloc to allocate the memory for the structure.
+    return 0; //in case no error has occurred
 }
 
 //--- exit function: -------------------------------------------
 static void __exit my_exit(void){
     // Unregister the device: (Should always succeed)
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
+
+    //free memory of the data structure of the devices with 'kfree'
 }
 
 //--- defining the init and exit functions:---------------------
