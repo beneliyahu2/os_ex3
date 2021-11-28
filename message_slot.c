@@ -15,33 +15,109 @@
 #include <linux/fs.h>       // for register_chrdev
 //#include <linux/uaccess.h>  // for get_user and put_user todo uncomment
 #include <linux/string.h>   // for memset. NOTE - not string.h!
+#include <errno.h>
+#include <linux/cdev.h> //todo maybe delete
+#include <linux/slab.h>
 
 #include <sys/types.h> //todo delete
 
 #define MAJOR_NUM 240
 #define DEVICE_NAME "msg_slot_device"
+#define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned long) // set the ioctrl number for assigning channel number
 
-//--------------------------------------------------------
+typedef struct device_file {
+    int opend;
+    int minor;
+    int active_channel_id;
+    char **channels;
+} dev_file;
 
 //================== DEVICE FUNCTIONS: ===========================
-
+/*
+ * --- device_open ---
+ */
 static int device_open(struct inode* inode, struct file*  file){ //todo maybe change the signature
+    unsigned int minor = iminor(inode);
+    dev_file curr_device = devices[minor];
+    if (curr_device.opend != 1){
+        curr_device.opend = 1;
+        curr_device.minor = minor;
+        curr_device.active_channel_id = -1;
+        curr_device.channels = NULL;
+    }
 }
 
-static long device_ioctl(struct file* filep, unsigned int ioctl_command_id, unsigned long  ioctl_param ){ //todo change the signature
+/*
+ * --- device_ioctl ---
+ */
+static long device_ioctl(struct file* filep, unsigned int ioctl_command_id, unsigned int  channel_id ){ //todo maybe change the signature
+    if (ioctl_command_id == MSG_SLOT_CHANNEL && channel_id != 0){
+        filep->private_data = (void*)channel_id;
+        char *message = kmalloc(sizeof(char)*128, GFP_KERNEL);
+        if (! message){
+            return -1;
+        }
+        channels[channel_id] = message; //todo - fix (probably problematic since I didn't initialize "channels" to array of certain size)
+    }
+    else{
+        errno = EINVAL;
+        return -1;
+    }
+    return 0;
 }
 
+/*
+ * --- device_write ---
+ */
+static ssize_t device_write( struct file* file, const char *buffer, size_t len, loff_t* offset){ //todo maybe change the signature. maybe add '--user' before 'buffer'
+    if (channel_id == -1){
+        errno = EINVAL;
+        return -1;
+    }
+    if (len == 0 || len > 128) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    unsigned int channel_id = file->private_data;
+    int i;
+    for (i=0 ; i<len ; i++ ){ //todo add condition on i - smaller then the buffer size
+        // get the value from the user buffer and copy it to the channel:
+        get_user(channel[i], &buffer[i]); // todo need to write it to specific channel
+    }
+    // todo if other error has occurred: ernno = <my_choice>; return -1;}
+    return i;
+}
+
+/*
+ * --- device_read ---
+ * read "len" bytes, from the device file starting from the offset provided into the buffer.
+ */
 static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){ //todo maybe change the signature, maybe add '--user' before 'buffer'
-    //read len bytes, from the device file starting from the offset provided into the buffer.
+    if (channel_id == -1){
+        errno = EINVAL;
+        return -1;
+    }
+    if (channel == NULL){
+        errno = EWOULDBLOCK;
+        return -1;
+    }
+    // todo - if (len(buffer) < len(massage_in_the channel)){ errno = ENOSPC; return -1;}
+    // todo if other error has occurred: ernno = <my_choice>; return -1;}
     //(cannot simply dereference the pointer since the pointer 'buffer' have address from the user apace and not from the kernel space)
-    // thus we will use: long copy_to_user(void __user *to, const void * from, unsigned long n)
+    // thus we will use the function: "put_user":
+    int i;
+    for (i=0 ; i<len ; i++){
+        // put the message from the channel into the user buffer:
+        put_user(channel[i], &buffer[i]); // todo add the offset
+    }
     //refresh the offset
     *offset += len;
     // return the number of bytes that have been successfully read
     return len;
 }
 
-static ssize_t device_write( struct file* file, const char __user* buffer, size_t len, loff_t* offset){ //todo maybe change the signature
+
+static int device_release(struct inode* inode, struct file* file){
 }
 
 //==================== DEVICE SETUP: =============================
@@ -53,18 +129,22 @@ static struct file_operations my_fops = {
         .read  = device_read,
         .write = device_write,
         .ioctl = device_ioctl, // todo maybe should be replaced with ".compat_ioctl" or ".unlocked_ioctl"
-} // todo need to add ; after the } as the example?
+        .release = device_release,
+}; // todo need to add ; after the } as the example?
 
 //--- Initializer: ---------------------------------------------
-static int __init my_init(void){
+static int my_init(void){ // todo add "__init" before "my_init"
 
     // Register driver capabilities with hard-coded major num:
     register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
+    printk( "Registerate successfuly.\n");
 
-    printk( "Registeration is successful.");
+    // Initiate an array for all the devices that the driver will manage:
+    dev_file devices[256]; // each device located under its minor number (as index)
 
-    //Initiate a data structure for all the devices that the driver manage - each one have different minor number
-    // using vmalloc or kmalloc to allocate the memory for the structure.
+    // todo - using kmalloc (with GFP_KERNEL flag)  to allocate the memory for the structure.
+
+    // todo - if initialization fails{ printk(KER_ERR...); }
     return 0; //in case no error has occurred
 }
 
@@ -73,7 +153,7 @@ static void __exit my_exit(void){
     // Unregister the device: (Should always succeed)
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
-    //free memory of the data structure of the devices with 'kfree'
+    //free memory of the data structure of the devices and the channels with 'kfree'
 }
 
 //--- defining the init and exit functions:---------------------
