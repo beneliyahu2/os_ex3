@@ -11,9 +11,9 @@
 
 #include <linux/kernel.h>   // for doing kernel work
 #include <linux/module.h>   // include all kernel modules
-//#include <linux/init.h>     // include __init and __exit macros todo uncomment
+#include <linux/init.h>     // include __init and __exit macros todo uncomment
 #include <linux/fs.h>       // for register_chrdev
-//#include <linux/uaccess.h>  // for get_user and put_user todo uncomment
+#include <linux/uaccess.h>  // for get_user and put_user todo uncomment
 #include <linux/string.h>   // for memset. NOTE - not string.h!
 #include <errno.h>
 #include <linux/cdev.h> //todo maybe delete
@@ -25,26 +25,57 @@
 #define DEVICE_NAME "msg_slot_device"
 #define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned long) // set the ioctrl number for assigning channel number
 
-typedef struct device_file {
+typedef struct channel_struct{
+    int channel_id;
+    char massage[128];
+    struct channel_struct *next;
+}channel;
+
+typedef struct device_file { //struct have default initialization to its attributes
     int opend;
     int minor;
     int active_channel_id;
-    char **channels;
+    channel *head_channel;
 } dev_file;
+
+//insert channel at the beginning of the list:
+int insert(dev_file *device, int channel_id, char *message) {
+    channel *new_channel = (channel *) kalloc(sizeof(channel));
+    if (!new_channel) {
+        return -1;
+    }
+    new_channel->channel_id = channel_id;
+    new_channel->massage = message; //todo - copy massage in a C way
+
+    new_channel->next = device->head_channel;
+    device->head_channel = new_channel;
+    return 0;
+}
+
+channel *find(dev_file *device, int desired_channel_id){
+    channel *curr_channel = device->head_channel;
+    while (curr_channel != NULL){
+        if (curr_channel->channel_id == desired_channel_id){
+            break;
+        }
+    }
+    return curr_channel; // returns NULL if there is no channel id as desired
+}
 
 //================== DEVICE FUNCTIONS: ===========================
 /*
  * --- device_open ---
  */
 static int device_open(struct inode* inode, struct file*  file){ //todo maybe change the signature
-    unsigned int minor = iminor(inode);
-    dev_file curr_device = devices[minor];
-    if (curr_device.opend != 1){
-        curr_device.opend = 1;
-        curr_device.minor = minor;
-        curr_device.active_channel_id = -1;
-        curr_device.channels = NULL;
+    dev_file *curr_device = (dev_file*)kmalloc(sizeof(dev_file), GFP_KERNEL);
+    if (!curr_device){
+        return -1;
     }
+    curr_device->opend = 1;
+    curr_device->minor = iminor(inode);
+    curr_device->active_channel_id = 0; //indicates no channel id was set yet.
+    file->private_data = (void*)curr_device;
+    return 0;
 }
 
 /*
