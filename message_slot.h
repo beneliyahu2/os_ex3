@@ -5,10 +5,10 @@
 #ifndef OS_EX3_MESSAGE_SLOT_H
 #define OS_EX3_MESSAGE_SLOT_H
 
+#include <linux/ioctl.h>
+
 #define MAJOR_NUM 240
 #define DEVICE_NAME "msg_slot_device"
-
-int __init my_init(void);
-void __exit my_exit(void)
+#define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned long) // set the ioctrl number for assigning channel number
 
 #endif //OS_EX3_MESSAGE_SLOT_H

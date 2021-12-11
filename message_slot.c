@@ -2,8 +2,6 @@
 // Created by Avigail on Nov-21.
 //
 
-#include "message_slot.h"
-
 #undef __KERNEL__
 #define __KERNEL__
 #undef MODULE
@@ -18,16 +16,16 @@
 #include <errno.h>
 #include <linux/cdev.h> //todo maybe delete
 #include <linux/slab.h>
-
 #include <sys/types.h> //todo delete
 
-#define MAJOR_NUM 240
-#define DEVICE_NAME "msg_slot_device"
-#define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned long) // set the ioctrl number for assigning channel number
+#include "message_slot.h"
+
+MODULE_LICENSE("GPL");
 
 typedef struct channel_node{
     int channel_id;
     char *message;
+    size_t msg_len;
     struct channel_node *next;
 }channel_node;
 
@@ -37,6 +35,9 @@ typedef struct device_struct { //struct have default initialization to its attri
     channel_node *active_channel;
     channel_node *head_channel;
 } dev_struct;
+
+// Array for all the devices that the driver will manage:
+static dev_struct *devices[256]; // each device located under its minor number (as index)
 
 // look for the channel id in the channels linked list and returns its node or NULL if doesn't exist
 channel_node *find_channel_node(dev_struct *device, int desired_channel_id){
@@ -53,7 +54,7 @@ channel_node *find_channel_node(dev_struct *device, int desired_channel_id){
 //insert new channel at the beginning of the list (called if :
 channel_node *insert_new_channel(dev_struct *device, int channel_id) {
 
-    channel_node *new_channel = (channel_node *) kmalloc(sizeof(channel_node)); // todo add use of GFP_KERNEL flag (declared in <linux/slab.h>
+    channel_node *new_channel = (channel_node *) kmalloc(sizeof(channel_node), GFP_KERNEL);
     if (!new_channel) { //if kmalloc fails:
         return NULL;
     }
@@ -70,9 +71,10 @@ channel_node *insert_new_channel(dev_struct *device, int channel_id) {
  * --- device_open ---
  */
 static int device_open(struct inode* inode, struct file*  dev_file){ //todo maybe change the signature
+
     // checking if the device already have a struct:
     int minor = iminor(inode);
-    dev_struct *device = dev_file->private_data;
+    dev_struct *device = devices[minor];
     if (!device){ //if the device don't have a struct yet:
         device = (dev_struct*)kmalloc(sizeof(dev_struct), GFP_KERNEL);
         if (!device){ //if kmalloc fails:
@@ -81,12 +83,14 @@ static int device_open(struct inode* inode, struct file*  dev_file){ //todo mayb
         device->minor = minor;
         device->active_channel = NULL; //indicates no channel id was set yet.
         device->head_channel = NULL; //indicates the device have no channels.
+        devices[minor] = device;
         dev_file->private_data = (void*)device;
     }
     if (device->opend == 0){
         // todo open file
         device->opend = 1;
     }
+
     return 0;
 }
 
@@ -96,19 +100,20 @@ static int device_open(struct inode* inode, struct file*  dev_file){ //todo mayb
 static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, unsigned int  channel_id ){ //todo maybe change the signature
 
     if (ioctl_command_id == MSG_SLOT_CHANNEL && channel_id != 0) {
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
-
-    dev_struct *device = dev_file->private_data;
+    dev_struct *device = (dev_struct*)dev_file->private_data;
+    if (!device){ //meaning the device wasn't opened yet
+        //todo return appropriate errno val (minus)
+    }
 
     // looking for the channel in the linked list of the device:
     channel_node *channel = find_channel_node(device, channel_id);
     if (!channel){ //if there is no channel with this id yet, creat it:
        channel = insert_new_channel(device, channel_id);
         if (! channel){ // if kmalloc of new channel failed:
-            // todo - set errno appropriately
-            return -1;
+
+            return -1; // todo - return minus errno value appropriately
         }
     }
     device->active_channel = channel;
@@ -124,18 +129,15 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
     dev_struct *device = file->private_data;
     channel_node *channel = device->active_channel;
     if (! channel){ // if no channel has been set yet:
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
     if (len == 0 || len > 128) {
-        errno = EMSGSIZE;
-        return -1;
+        return -EMSGSIZE;
     }
 
     channel->message = kmalloc(sizeof(char)*len, GFP_KERNEL);
     if (! channel->message){ // if kmalloc failed:
-        // todo - ernno = <my_choice>;
-        return -1;
+        return -1; // todo - return minus ernno of <my_choice>;
     }
 
     int i;
@@ -143,6 +145,8 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
         // get the value from the user buffer and copy it to the channel:
         get_user((channel->message)[i], &buffer[i]);
     }
+    channel->msg_len = len;
+
     return i;
 }
 
@@ -154,30 +158,32 @@ static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t*
     dev_struct *device = file->private_data;
     channel_node *channel = device->active_channel;
     if (! channel){ // if no channel has been set yet:
-        errno = EINVAL;
-        return -1;
+        return -EINVAL;
     }
     char *massage = channel->message;
     if (!massage){
-        errno = EWOULDBLOCK;
-        return -1;
+        return -EWOULDBLOCK;
     }
 
-    // todo - if (len(buffer) < len(massage_in_the channel)){ errno = ENOSPC; return -1;}
+    if (len < channel->msg_len){
+        return -ENOSPC;
+    }
     // todo if other error has occurred: ernno = <my_choice>; return -1;}
 
     int i;
-    for (i=0 ; i<len ; i++){
+    for (i=0 ; i<channel->msg_len ; i++){ // todo - change 'len' to new field of the channel > 'length of the current massage' that will be saved in function write_device
         // put the message from the channel into the user buffer:
         put_user((channel->message)[i], &buffer[i]);
     }
 
     // return the number of bytes that have been successfully read
-    return len;
+    return i;
 }
 
 
 static int device_release(struct inode* inode, struct file* file){ //todo - do I need this function?
+    kfree(file->private_data);
+    return 0;
 }
 
 //==================== DEVICE SETUP: =============================
@@ -188,21 +194,21 @@ static struct file_operations my_fops = {
         .open = device_open,
         .read  = device_read,
         .write = device_write,
-        .ioctl = device_ioctl, // todo maybe supposed to be ".compat_ioctl" or ".unlocked_ioctl" instead of ".ioctl"
+        .unlocked_ioctl = device_ioctl,
         .release = device_release,
-}; // todo need to add ; after the } as in the example?
+};
 
 //--- Initializer: ---------------------------------------------
 static int my_init(void){ // todo add "__init" before "my_init"
-
+    int ret_rgs = -1;
     // Register driver capabilities with hard-coded major num:
-    register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
+    ret_rgs = register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
+    if (ret_rgs < 0){
+        printk( KERN_ALERT "%s registraion failed for  %d\n",
+                DEVICE_NAME, MAJOR_NUM );
+        return ret_rgs;
+    }
     printk( "Registerate successfuly.\n");
-
-    MODULE_LICENSE("GPL");
-
-    // Initiate an array for all the devices that the driver will manage: // todo - do I need that?
-    dev_struct devices[256]; // each device located under its minor number (as index)
 
     // todo - using kmalloc (with GFP_KERNEL flag)  to allocate the memory for the structure.
 
@@ -212,6 +218,9 @@ static int my_init(void){ // todo add "__init" before "my_init"
 
 //--- exit function: -------------------------------------------
 static void __exit my_exit(void){
+    // todo - kfree linked list of channel nodes (including free for all the msg inside)
+    // todo = kfree struct of devices
+
     // Unregister the device: (Should always succeed)
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 
