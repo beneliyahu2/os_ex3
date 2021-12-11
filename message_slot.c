@@ -40,19 +40,23 @@ static dev_struct *devices[256]; // each device located under its minor number (
 
 // look for the channel id in the channels linked list and returns its node or NULL if doesn't exist
 channel_node *find_channel_node(dev_struct *device, unsigned long desired_channel_id){
+    int i = 0; //todo del
     channel_node *curr_channel = device->head_channel;
-    while (curr_channel != NULL){
+    while (curr_channel){
         if (curr_channel->channel_id == desired_channel_id){
             break; // break loop. curr_channel is the desired channel node
         }
+        if (i == 5){ //todo del
+            break; //todo del
+        }
         curr_channel = curr_channel-> next;
+        i++; //todo del
     }
     return curr_channel; // curr_channel is NULL (end of linked list) if there is no channel id as desired
 }
 
 //insert new channel at the beginning of the list (called if :
 channel_node *insert_new_channel(dev_struct *device, int channel_id) {
-
     channel_node *new_channel = (channel_node *) kmalloc(sizeof(channel_node), GFP_KERNEL);
     if (!new_channel) { //if kmalloc fails:
         return NULL;
