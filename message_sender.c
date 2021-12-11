@@ -41,13 +41,13 @@ int main(int argc, char** argv){
         exit(1); //(for any error print appropriate error message to stderr and exit(1))
     }
     // write msg from argv[3] to the device file (not including the NULL at the end):
-    ret_val = write(fd, msg, strlen(msg)); //todo - change the "len" parameter to the actual length of the msg???
+    ret_val = write(fd, msg, strlen(msg));
     if (ret_val < 0){
         fprintf(stderr, "Can't write to channel %d of file: %s. %s\n",channel_id , DEVICE_NAME, strerror(errno));
         exit(1); //(for any error print appropriate error message to stderr and exit(1))
     }
-    // close device (device_release): todo - understand what to do here
-
+    // close device (device_release):
+    close(fd);
     // exit the program (with exit code 0) if no error occurred:
     exit(0);
 }

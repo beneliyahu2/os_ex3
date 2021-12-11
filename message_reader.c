@@ -40,16 +40,19 @@ int main(int argc, char** argv){
         exit(1); //(for any error print appropriate error message to stderr and exit(1))
     }
     // read a message from the message slot file to a buffer:
-    ret_val = read(fd, msg, 128); //todo - change the "nbytes" parameter to the actual length of the msg???
+    ret_val = read(fd, msg, 128);
     if (ret_val < 0){
         fprintf(stderr, "Can't read from channel %d of file: %s. %s\n",channel_id , DEVICE_NAME, strerror(errno));
         exit(1); //(for any error print appropriate error message to stderr and exit(1))
     }
-    // close device (device_release): todo - understand what to do here
-
+    // close device (device_release):
+    close(fd);
     // print the message to stdout (using "write()" syscall):
-    write(1, msg, ret_val); //returned value from the 'read' func is the message length todo - check returned value and add error handling
-
+    ret_val = write(1, msg, ret_val); //returned value from the 'read' func is the message length
+    if (ret_val < 0){
+        fprintf(stderr, "printing from channel %d of file %s to stdout filed. %s\n",channel_id , DEVICE_NAME, strerror(errno));
+        exit(1); //(for any error print appropriate error message to stderr and exit(1))
+    }
     // exit the program (with exit code 0 if no error occurred)
     exit(0);
 }
