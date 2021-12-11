@@ -23,7 +23,7 @@ int main(int argc, char** argv){
      * the flow:
      * open device (by the path from the user)
      * set the channel id to the id from the user
-     * read a message from the massage slot file to a buffer
+     * read a message from the message slot file to a buffer
      * close device (device_release)
      * print the message to stdout (using "write()" syscall)
      * exit the program (with exit code 0 if no error occurred)

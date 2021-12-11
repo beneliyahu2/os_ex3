@@ -25,75 +25,94 @@
 #define DEVICE_NAME "msg_slot_device"
 #define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned long) // set the ioctrl number for assigning channel number
 
-typedef struct channel_struct{
+typedef struct channel_node{
     int channel_id;
-    char massage[128];
-    struct channel_struct *next;
-}channel;
+    char *message;
+    struct channel_node *next;
+}channel_node;
 
-typedef struct device_file { //struct have default initialization to its attributes
+typedef struct device_struct { //struct have default initialization to its attributes
     int opend;
     int minor;
-    int active_channel_id;
-    channel *head_channel;
-} dev_file;
+    channel_node *active_channel;
+    channel_node *head_channel;
+} dev_struct;
 
-//insert channel at the beginning of the list:
-int insert(dev_file *device, int channel_id, char *message) {
-    channel *new_channel = (channel *) kalloc(sizeof(channel));
-    if (!new_channel) {
-        return -1;
-    }
-    new_channel->channel_id = channel_id;
-    new_channel->massage = message; //todo - copy massage in a C way
-
-    new_channel->next = device->head_channel;
-    device->head_channel = new_channel;
-    return 0;
-}
-
-channel *find(dev_file *device, int desired_channel_id){
-    channel *curr_channel = device->head_channel;
+// look for the channel id in the channels linked list and returns its node or NULL if doesn't exist
+channel_node *find_channel_node(dev_struct *device, int desired_channel_id){
+    channel_node *curr_channel = device->head_channel;
     while (curr_channel != NULL){
         if (curr_channel->channel_id == desired_channel_id){
-            break;
+            break; // break loop. curr_channel is the desired channel node
         }
+        curr_channel = curr_channel-> next;
     }
-    return curr_channel; // returns NULL if there is no channel id as desired
+    return curr_channel; // curr_channel is NULL (end of linked list) if there is no channel id as desired
+}
+
+//insert new channel at the beginning of the list (called if :
+channel_node *insert_new_channel(dev_struct *device, int channel_id) {
+
+    channel_node *new_channel = (channel_node *) kmalloc(sizeof(channel_node)); // todo add use of GFP_KERNEL flag (declared in <linux/slab.h>
+    if (!new_channel) { //if kmalloc fails:
+        return NULL;
+    }
+    new_channel->channel_id = channel_id;
+    new_channel->message = NULL;
+    new_channel->next = device->head_channel;
+    device->head_channel = new_channel;
+
+    return new_channel;
 }
 
 //================== DEVICE FUNCTIONS: ===========================
 /*
  * --- device_open ---
  */
-static int device_open(struct inode* inode, struct file*  file){ //todo maybe change the signature
-    dev_file *curr_device = (dev_file*)kmalloc(sizeof(dev_file), GFP_KERNEL);
-    if (!curr_device){
-        return -1;
+static int device_open(struct inode* inode, struct file*  dev_file){ //todo maybe change the signature
+    // checking if the device already have a struct:
+    int minor = iminor(inode);
+    dev_struct *device = dev_file->private_data;
+    if (!device){ //if the device don't have a struct yet:
+        device = (dev_struct*)kmalloc(sizeof(dev_struct), GFP_KERNEL);
+        if (!device){ //if kmalloc fails:
+            return -1;
+        }
+        device->minor = minor;
+        device->active_channel = NULL; //indicates no channel id was set yet.
+        device->head_channel = NULL; //indicates the device have no channels.
+        dev_file->private_data = (void*)device;
     }
-    curr_device->opend = 1;
-    curr_device->minor = iminor(inode);
-    curr_device->active_channel_id = 0; //indicates no channel id was set yet.
-    file->private_data = (void*)curr_device;
+    if (device->opend == 0){
+        // todo open file
+        device->opend = 1;
+    }
     return 0;
 }
 
 /*
  * --- device_ioctl ---
  */
-static long device_ioctl(struct file* filep, unsigned int ioctl_command_id, unsigned int  channel_id ){ //todo maybe change the signature
-    if (ioctl_command_id == MSG_SLOT_CHANNEL && channel_id != 0){
-        filep->private_data = (void*)channel_id;
-        char *message = kmalloc(sizeof(char)*128, GFP_KERNEL);
-        if (! message){
-            return -1;
-        }
-        channels[channel_id] = message; //todo - fix (probably problematic since I didn't initialize "channels" to array of certain size)
-    }
-    else{
+static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, unsigned int  channel_id ){ //todo maybe change the signature
+
+    if (ioctl_command_id == MSG_SLOT_CHANNEL && channel_id != 0) {
         errno = EINVAL;
         return -1;
     }
+
+    dev_struct *device = dev_file->private_data;
+
+    // looking for the channel in the linked list of the device:
+    channel_node *channel = find_channel_node(device, channel_id);
+    if (!channel){ //if there is no channel with this id yet, creat it:
+       channel = insert_new_channel(device, channel_id);
+        if (! channel){ // if kmalloc of new channel failed:
+            // todo - set errno appropriately
+            return -1;
+        }
+    }
+    device->active_channel = channel;
+
     return 0;
 }
 
@@ -101,7 +120,10 @@ static long device_ioctl(struct file* filep, unsigned int ioctl_command_id, unsi
  * --- device_write ---
  */
 static ssize_t device_write( struct file* file, const char *buffer, size_t len, loff_t* offset){ //todo maybe change the signature. maybe add '--user' before 'buffer'
-    if (channel_id == -1){
+
+    dev_struct *device = file->private_data;
+    channel_node *channel = device->active_channel;
+    if (! channel){ // if no channel has been set yet:
         errno = EINVAL;
         return -1;
     }
@@ -109,46 +131,53 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
         errno = EMSGSIZE;
         return -1;
     }
-    unsigned int channel_id = file->private_data;
+
+    channel->message = kmalloc(sizeof(char)*len, GFP_KERNEL);
+    if (! channel->message){ // if kmalloc failed:
+        // todo - ernno = <my_choice>;
+        return -1;
+    }
+
     int i;
     for (i=0 ; i<len ; i++ ){ //todo add condition on i - smaller then the buffer size
         // get the value from the user buffer and copy it to the channel:
-        get_user(channel[i], &buffer[i]); // todo need to write it to specific channel
+        get_user((channel->message)[i], &buffer[i]);
     }
-    // todo if other error has occurred: ernno = <my_choice>; return -1;}
     return i;
 }
 
 /*
  * --- device_read ---
- * read "len" bytes, from the device file starting from the offset provided into the buffer.
+ * read "len" bytes, from the channel to the user buffer
  */
 static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){ //todo maybe change the signature, maybe add '--user' before 'buffer'
-    if (channel_id == -1){
+    dev_struct *device = file->private_data;
+    channel_node *channel = device->active_channel;
+    if (! channel){ // if no channel has been set yet:
         errno = EINVAL;
         return -1;
     }
-    if (channel == NULL){
+    char *massage = channel->message;
+    if (!massage){
         errno = EWOULDBLOCK;
         return -1;
     }
+
     // todo - if (len(buffer) < len(massage_in_the channel)){ errno = ENOSPC; return -1;}
     // todo if other error has occurred: ernno = <my_choice>; return -1;}
-    //(cannot simply dereference the pointer since the pointer 'buffer' have address from the user apace and not from the kernel space)
-    // thus we will use the function: "put_user":
+
     int i;
     for (i=0 ; i<len ; i++){
         // put the message from the channel into the user buffer:
-        put_user(channel[i], &buffer[i]); // todo add the offset
+        put_user((channel->message)[i], &buffer[i]);
     }
-    //refresh the offset
-    *offset += len;
+
     // return the number of bytes that have been successfully read
     return len;
 }
 
 
-static int device_release(struct inode* inode, struct file* file){
+static int device_release(struct inode* inode, struct file* file){ //todo - do I need this function?
 }
 
 //==================== DEVICE SETUP: =============================
@@ -159,9 +188,9 @@ static struct file_operations my_fops = {
         .open = device_open,
         .read  = device_read,
         .write = device_write,
-        .ioctl = device_ioctl, // todo maybe should be replaced with ".compat_ioctl" or ".unlocked_ioctl"
+        .ioctl = device_ioctl, // todo maybe supposed to be ".compat_ioctl" or ".unlocked_ioctl" instead of ".ioctl"
         .release = device_release,
-}; // todo need to add ; after the } as the example?
+}; // todo need to add ; after the } as in the example?
 
 //--- Initializer: ---------------------------------------------
 static int my_init(void){ // todo add "__init" before "my_init"
@@ -170,8 +199,10 @@ static int my_init(void){ // todo add "__init" before "my_init"
     register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
     printk( "Registerate successfuly.\n");
 
-    // Initiate an array for all the devices that the driver will manage:
-    dev_file devices[256]; // each device located under its minor number (as index)
+    MODULE_LICENSE("GPL");
+
+    // Initiate an array for all the devices that the driver will manage: // todo - do I need that?
+    dev_struct devices[256]; // each device located under its minor number (as index)
 
     // todo - using kmalloc (with GFP_KERNEL flag)  to allocate the memory for the structure.
 
