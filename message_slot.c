@@ -13,7 +13,6 @@
 #include <linux/fs.h>       // for register_chrdev
 #include <linux/uaccess.h>  // for get_user and put_user
 #include <linux/string.h>   // for memset. NOTE - not string.h!
-#include <errno.h>
 //#include <linux/cdev.h> //todo maybe delete
 #include <linux/slab.h>
 //#include <sys/types.h> //todo delete
@@ -40,7 +39,7 @@ typedef struct device_struct { //struct have default initialization to its attri
 static dev_struct *devices[256]; // each device located under its minor number (as index)
 
 // look for the channel id in the channels linked list and returns its node or NULL if doesn't exist
-channel_node *find_channel_node(dev_struct *device, int desired_channel_id){
+channel_node *find_channel_node(dev_struct *device, unsigned long desired_channel_id){
     channel_node *curr_channel = device->head_channel;
     while (curr_channel != NULL){
         if (curr_channel->channel_id == desired_channel_id){
@@ -92,13 +91,15 @@ static int device_open(struct inode* inode, struct file*  dev_file){
 /*
  * --- device_ioctl ---
  */
-static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, unsigned int  channel_id ){
+static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, unsigned long channel_id ){
+    dev_struct *device;
+    channel_node *channel;
     if (ioctl_command_id == MSG_SLOT_CHANNEL && channel_id != 0) {
         return -EINVAL;
     }
-    dev_struct *device = (dev_struct*)dev_file->private_data;
+    device = (dev_struct*)dev_file->private_data;
     // looking for the channel in the linked list of the device:
-    channel_node *channel = find_channel_node(device, channel_id);
+    channel = find_channel_node(device, channel_id);
     if (!channel){ //if there is no channel with this id yet, creat it:
        channel = insert_new_channel(device, channel_id);
         if (! channel){ // if kmalloc of new channel failed:
@@ -114,6 +115,7 @@ static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, u
  * --- device_write ---
  */
 static ssize_t device_write( struct file* file, const char *buffer, size_t len, loff_t* offset){ //todo - maybe add '--user' before 'buffer'
+    int i;
     dev_struct *device = (dev_struct*)file->private_data;
     channel_node *channel = device->active_channel;
     if (! channel){ // if no channel has been set yet:
@@ -127,7 +129,6 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
         printk("Failed to allocate memory.\n");
         return -ENOMEM;
     }
-    int i;
     for (i=0 ; i<len ; i++ ){
         // get the value from the user buffer and copy it to the channel:
         get_user((channel->message)[i], &buffer[i]);
@@ -141,19 +142,20 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
  * read "len" bytes, from the channel to the user buffer
  */
 static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){ //todo - maybe add '--user' before 'buffer'
+    int i;
+    char *massage;
     dev_struct *device = (dev_struct*)file->private_data;
     channel_node *channel = device->active_channel;
     if (! channel){ // if no channel has been set yet:
         return -EINVAL;
     }
-    char *massage = channel->message;
+    massage = channel->message;
     if (!massage){
         return -EWOULDBLOCK;
     }
     if (len < channel->msg_len){
         return -ENOSPC;
     }
-    int i;
     for (i=0 ; i<channel->msg_len ; i++){
         // put the message from the channel into the user buffer:
         put_user((channel->message)[i], &buffer[i]);
@@ -196,8 +198,10 @@ static int my_init(void){ //todo add '__init' before 'my_init'
 
 //--- exit function: -------------------------------------------
 static void  my_exit(void){ //todo add '__exit' before 'my exit'
+    int i;
+    channel_node *next_node;
     //free memory of all the devices, channels and messages:
-    for (int i = 0; i<256; i++){
+    for (i = 0; i<256; i++){
         dev_struct *device = devices[i];
         if (device){
             channel_node *curr_node = device->head_channel;
@@ -206,7 +210,7 @@ static void  my_exit(void){ //todo add '__exit' before 'my exit'
                 if (msg){
                     kfree(msg);
                 }
-                channel_node *next_node = curr_node->next;
+                next_node = curr_node->next;
                 kfree(curr_node);
                 curr_node = next_node;
             }
