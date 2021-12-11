@@ -13,9 +13,7 @@
 #include <linux/fs.h>       // for register_chrdev
 #include <linux/uaccess.h>  // for get_user and put_user
 #include <linux/string.h>   // for memset. NOTE - not string.h!
-//#include <linux/cdev.h> //todo maybe delete
 #include <linux/slab.h>
-//#include <sys/types.h> //todo delete
 
 #include "message_slot.h"
 
@@ -40,17 +38,12 @@ static dev_struct *devices[256]; // each device located under its minor number (
 
 // look for the channel id in the channels linked list and returns its node or NULL if doesn't exist
 channel_node *find_channel_node(dev_struct *device, unsigned long desired_channel_id){
-    int i = 0; //todo del
     channel_node *curr_channel = device->head_channel;
     while (curr_channel){
         if (curr_channel->channel_id == desired_channel_id){
             break; // break loop. curr_channel is the desired channel node
         }
-        if (i == 5){ //todo del
-            break; //todo del
-        }
         curr_channel = curr_channel-> next;
-        i++; //todo del
     }
     return curr_channel; // curr_channel is NULL (end of linked list) if there is no channel id as desired
 }
@@ -118,7 +111,7 @@ static long device_ioctl(struct file* dev_file, unsigned int ioctl_command_id, u
 /*
  * --- device_write ---
  */
-static ssize_t device_write( struct file* file, const char *buffer, size_t len, loff_t* offset){ //todo - maybe add '--user' before 'buffer'
+static ssize_t device_write( struct file* file, const char *buffer, size_t len, loff_t* offset){
     int i;
     dev_struct *device = (dev_struct*)file->private_data;
     channel_node *channel = device->active_channel;
@@ -145,7 +138,7 @@ static ssize_t device_write( struct file* file, const char *buffer, size_t len, 
  * --- device_read ---
  * read "len" bytes, from the channel to the user buffer
  */
-static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){ //todo - maybe add '--user' before 'buffer'
+static ssize_t device_read( struct file* file, char *buffer, size_t len, loff_t* offset){
     int i;
     char *massage;
     dev_struct *device = (dev_struct*)file->private_data;
@@ -188,7 +181,7 @@ static struct file_operations my_fops = {
 };
 
 //--- Initializer: ---------------------------------------------
-static int my_init(void){ //todo add '__init' before 'my_init'
+static int my_init(void){
     int ret_rgs = -1;
     // Register driver capabilities with hard-coded major num:
     ret_rgs = register_chrdev(MAJOR_NUM, DEVICE_NAME, &my_fops);
@@ -201,7 +194,7 @@ static int my_init(void){ //todo add '__init' before 'my_init'
 }
 
 //--- exit function: -------------------------------------------
-static void  my_exit(void){ //todo add '__exit' before 'my exit'
+static void  my_exit(void){
     int i;
     channel_node *next_node;
     //free memory of all the devices, channels and messages:
